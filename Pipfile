@@ -15,4 +15,7 @@ beautifulsoup4 = "*"
 [dev-packages]
 
 [requires]
-python_version = "3.8"
+python_version = "3.9"
+
+[packages.tiktok_downloader]
+git = "https://github.com/krypton-byte/tiktok-downloader"

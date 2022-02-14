@@ -14,6 +14,8 @@ import threading
 import time
 from bs4 import BeautifulSoup
 import requests
+from tiktok_downloader import snaptik
+from tiktok_downloader import info_post
 
 load_dotenv()
 
@@ -116,6 +118,53 @@ def get_thumbnails(filename, s3_client, duration = None):
     thumb_index_cdn_url =  get_cdn_url(thumb_index)
 
     return (key_thumb, thumb_index_cdn_url)
+
+def download_tiktok_video(url, s3_client, check_if_exists=False):
+    status = 'success'
+
+    info = info_post(url)
+    key = 'tiktok_' + str(info.id) + '.mp4'
+    filename = 'tmp/' + key
+
+    if check_if_exists:
+        try:
+            s3_client.head_object(Bucket=os.getenv('DO_BUCKET'), Key=key)
+
+            # file exists
+            cdn_url = get_cdn_url(key)
+
+            status = 'already archived'
+
+        except ClientError:
+            pass
+
+    if status != 'already archived':
+        media = snaptik(url).get_media()
+        if len(media) > 0:
+            media[0].download(filename)
+            with open(filename, 'rb') as f:
+                do_s3_upload(s3_client, f, key)
+
+            cdn_url = get_cdn_url(key)
+        else:
+            status = 'could not download media'
+
+
+    key_thumb, thumb_index = get_thumbnails(filename, s3_client, duration=info.duration)
+    os.remove(filename)
+
+    video_data = {
+        'cdn_url': cdn_url,
+        'thumbnail': key_thumb,
+        'thumbnail_index': thumb_index,
+        'duration': info.duration,
+        'title': info.caption,
+        'timestamp': info.create.isoformat()
+    }
+
+    return (video_data, status)
+
+
 
 
 def download_telegram_video(url, s3_client, check_if_exists=False):
@@ -266,7 +315,7 @@ def download_vid(url, s3_client, check_if_exists=False):
             s3_client.head_object(Bucket=os.getenv('DO_BUCKET'), Key=key)
 
             # file exists
-            cdn_url = get_cdn_url(os, key)
+            cdn_url = get_cdn_url(key)
 
             status = 'already archived'
 
@@ -290,7 +339,7 @@ def download_vid(url, s3_client, check_if_exists=False):
 
     if status != 'already archived':
         key = get_key(filename)
-        cdn_url = get_cdn_url(os, key)
+        cdn_url = get_cdn_url(key)
 
         with open(filename, 'rb') as f:
             do_s3_upload(s3_client, f, key)
@@ -446,6 +495,11 @@ def process_sheet(sheet):
                             video_data, status = internet_archive(
                                 v[url_index], s3_client)
                         
+                        update_sheet(wks, i, status, video_data, columns, v)
+
+                    elif 'tiktok.com' in v[url_index]:
+                        video_data, status = download_tiktok_video(v[url_index], s3_client, check_if_exists=False)
+
                         update_sheet(wks, i, status, video_data, columns, v)
 
                     else:
