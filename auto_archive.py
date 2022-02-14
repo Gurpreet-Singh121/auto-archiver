@@ -14,8 +14,7 @@ import threading
 import time
 from bs4 import BeautifulSoup
 import requests
-from tiktok_downloader import snaptik
-from tiktok_downloader import info_post
+import tiktok_downloader
 
 load_dotenv()
 
@@ -121,46 +120,51 @@ def get_thumbnails(filename, s3_client, duration = None):
 
 def download_tiktok_video(url, s3_client, check_if_exists=False):
     status = 'success'
+    video_data = {}
 
-    info = info_post(url)
-    key = 'tiktok_' + str(info.id) + '.mp4'
-    filename = 'tmp/' + key
+    try:
+        info = tiktok_downloader.info_post(url)
+        key = 'tiktok_' + str(info.id) + '.mp4'
+        filename = 'tmp/' + key
 
-    if check_if_exists:
-        try:
-            s3_client.head_object(Bucket=os.getenv('DO_BUCKET'), Key=key)
+        if check_if_exists:
+            try:
+                s3_client.head_object(Bucket=os.getenv('DO_BUCKET'), Key=key)
 
-            # file exists
-            cdn_url = get_cdn_url(key)
+                # file exists
+                cdn_url = get_cdn_url(key)
 
-            status = 'already archived'
+                status = 'already archived'
 
-        except ClientError:
-            pass
+            except ClientError:
+                pass
 
-    if status != 'already archived':
-        media = snaptik(url).get_media()
-        if len(media) > 0:
-            media[0].download(filename)
-            with open(filename, 'rb') as f:
-                do_s3_upload(s3_client, f, key)
+        if status != 'already archived':
+            media = tiktok_downloader.snaptik(url).get_media()
+            if len(media) > 0:
+                media[0].download(filename)
+                with open(filename, 'rb') as f:
+                    do_s3_upload(s3_client, f, key)
 
-            cdn_url = get_cdn_url(key)
-        else:
-            status = 'could not download media'
+                cdn_url = get_cdn_url(key)
+            else:
+                status = 'could not download media'
 
 
-    key_thumb, thumb_index = get_thumbnails(filename, s3_client, duration=info.duration)
-    os.remove(filename)
+        key_thumb, thumb_index = get_thumbnails(filename, s3_client, duration=info.duration)
+        os.remove(filename)
+        
+        video_data = {
+            'cdn_url': cdn_url,
+            'thumbnail': key_thumb,
+            'thumbnail_index': thumb_index,
+            'duration': info.duration,
+            'title': info.caption,
+            'timestamp': info.create.isoformat()
+        }
+    except tiktok_downloader.Except.InvalidUrl:
+        status = 'Invalid URL'
 
-    video_data = {
-        'cdn_url': cdn_url,
-        'thumbnail': key_thumb,
-        'thumbnail_index': thumb_index,
-        'duration': info.duration,
-        'title': info.caption,
-        'timestamp': info.create.isoformat()
-    }
 
     return (video_data, status)
 
